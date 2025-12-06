@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Face Scan + Telegram Test</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+    .container {
+      background: rgba(255, 255, 255, 0.97);
+      border-radius: 20px;
+      padding: 24px;
+      max-width: 900px;
+      width: 100%;
+      box-shadow: 0 18px 45px rgba(0,0,0,0.35);
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 6px;
+      font-size: 24px;
+      color: #222;
+    }
+    .subtitle {
+      text-align: center;
+      font-size: 13px;
+      color: #666;
+      margin-bottom: 18px;
+    }
+    .video-container {
+      position: relative;
+      width: 100%;
+      max-width: 640px;
+      margin: 0 auto;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.25);
+      background: #000;
+    }
+    video {
+      width: 100%;
+      display: block;
+      transform: scaleX(-1);
+    }
+    canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      transform: scaleX(-1);
+    }
+    .controls {
+      margin-top: 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+    }
+    button {
+      border: none;
+      border-radius: 999px;
+      padding: 10px 22px;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: .03em;
+      cursor: pointer;
+      transition: all .25s;
+      text-transform: uppercase;
+    }
+    #startBtn {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+    }
+    #startBtn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(102,126,234,0.5);
+    }
+    #scanBtn {
+      background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
+      color: #fff;
+    }
+    #scanBtn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(16,185,129,0.5);
+    }
+    #stopBtn {
+      background: linear-gradient(135deg, #f97373 0%, #ef4444 100%);
+      color: #fff;
+    }
+    #stopBtn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(239,68,68,0.5);
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      box-shadow: none !important;
+      transform: none !important;
+    }
+    .status {
+      margin-top: 14px;
+      text-align: center;
+      font-size: 13px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-weight: 500;
+    }
+    .status.loading { background:#fff7cc; color:#854d0e; }
+    .status.active { background:#dcfce7; color:#166534; }
+    .status.error { background:#fee2e2; color:#991b1b; }
+    .status.info { background:#e0f2fe; color:#075985; }
+
+    .stats-card {
+      margin-top: 18px;
+      padding: 14px 16px;
+      border-radius: 12px;
+      background: #f3f4f6;
+      font-size: 13px;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit,minmax(140px,1fr));
+      gap: 8px 14px;
+      margin-top: 8px;
+    }
+    .stat-item {
+      background: #fff;
+      border-radius: 10px;
+      padding: 8px 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .stat-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: #6b7280;
+      margin-bottom: 2px;
+    }
+    .stat-value {
+      font-size: 14px;
+      font-weight: 600;
+      color: #111827;
+    }
+
+    @media (max-width: 600px) {
+      .container { padding: 18px; }
+      h1 { font-size: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Face Scan + Stats</h1>
+    <p class="subtitle">Local test: face scan, basic symmetry stats & Telegram send</p>
+
+    <div class="video-container">
+      <video id="video" autoplay playsinline></video>
+      <canvas id="canvas"></canvas>
+    </div>
+
+    <div class="controls">
+      <button id="startBtn">Start Camera</button>
+      <button id="scanBtn" disabled>Start Scan & Send</button>
+      <button id="stopBtn" disabled>Stop</button>
+    </div>
+
+    <div id="status" class="status info">
+      Ready. Start camera, then click "Start Scan & Send".
+    </div>
+
+    <div id="statsCard" class="stats-card" style="display:none;">
+      <div><strong>Last Scan Result</strong></div>
+      <div id="statsSummary" style="margin-top:4px;font-size:12px;color:#4b5563;"></div>
+      <div class="stats-grid" id="statsGrid"></div>
+    </div>
+  </div>
+
+  <!-- MediaPipe -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+
+  <script>
+    // ===== DOM refs =====
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const startBtn = document.getElementById("startBtn");
+    const scanBtn = document.getElementById("scanBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const statusDiv = document.getElementById("status");
+    const statsCard = document.getElementById("statsCard");
+    const statsSummary = document.getElementById("statsSummary");
+    const statsGrid = document.getElementById("statsGrid");
+
+    // ===== Telegram creds (TEST ONLY) =====
+    const BOT_TOKEN = "7970088628:AAEJbT7PvzAnnP33z9_vVzCWWLItzbTXCfQ";
+    const CHAT_ID = "6881713177";
+
+    let camera = null;
+    let faceMesh = null;
+    let stream = null;
+    let lastLandmarks = null;
+    let scanning = false;
+    let scanStartTime = null;
+
+    function setStatus(msg, type = "info") {
+      statusDiv.textContent = msg;
+      statusDiv.className = "status " + type;
+    }
+
+    function dataURLtoBlob(dataUrl) {
+      const arr = dataUrl.split(",");
+      const mime = arr[0].match(/:(.*?);/)[1];
+      const bstr = atob(arr[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) u8arr[n] = bstr.charCodeAt(n);
+      return new Blob([u8arr], { type: mime });
+    }
+
+    // ===== Basic math helpers for stats =====
+    function dist(a, b) {
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      return Math.sqrt(dx*dx + dy*dy);
+    }
+
+    // indices from MediaPipe FaceMesh docs (rough only)
+    const IDX = {
+      chin: 152,
+      forehead: 10,
+      leftCheek: 234,
+      rightCheek: 454,
+      noseTip: 1,
+      noseLeft: 198,
+      noseRight: 420,
+      leftEyeOuter: 33,
+      rightEyeOuter: 263,
+      mouthLeft: 61,
+      mouthRight: 291
+    };
+
+    function computeFaceStats(landmarks) {
+      const lm = (i) => landmarks[i];
+
+      const faceHeight = dist(lm(IDX.chin), lm(IDX.forehead));
+      const faceWidth = dist(lm(IDX.leftCheek), lm(IDX.rightCheek));
+      const faceRatio = faceHeight > 0 ? faceWidth / faceHeight : 0;
+
+      const noseWidth = dist(lm(IDX.noseLeft), lm(IDX.noseRight));
+      const noseHeight = dist(lm(IDX.forehead), lm(IDX.noseTip)); // rough
+      const noseWidthRatio = faceWidth > 0 ? noseWidth / faceWidth : 0;
+
+      const eyeDist = dist(lm(IDX.leftEyeOuter), lm(IDX.rightEyeOuter));
+      const eyeFaceRatio = faceWidth > 0 ? eyeDist / faceWidth : 0;
+
+      const mouthWidth = dist(lm(IDX.mouthLeft), lm(IDX.mouthRight));
+      const lipToNoseRatio = noseWidth > 0 ? mouthWidth / noseWidth : 0;
+
+      // symmetry: compare left cheek–nose vs right cheek–nose distance
+      const leftSym = dist(lm(IDX.leftCheek), lm(IDX.noseTip));
+      const rightSym = dist(lm(IDX.rightCheek), lm(IDX.noseTip));
+      const symDiff = Math.abs(leftSym - rightSym);
+      let symmetryScore = 100 - (symDiff / faceWidth) * 100 * 2;
+      symmetryScore = Math.max(0, Math.min(100, symmetryScore || 0));
+
+      // rough face shape
+      let faceShape = "Balanced";
+      if (faceRatio < 0.65) faceShape = "Long";
+      else if (faceRatio > 0.8) faceShape = "Wide";
+      else faceShape = "Oval";
+
+      // overall score -> simple average weighting
+      let overall = (
+        symmetryScore * 0.6 +
+        (1 - Math.abs(eyeFaceRatio - 0.46)) * 40 + // 0.40–0.52 sweet spot
+        (1 - Math.abs(noseWidthRatio - 0.33)) * 30 // around ~0.3 sweet spot
+      );
+      overall = Math.max(0, Math.min(100, overall || 0));
+
+      return {
+        symmetryScore: Math.round(symmetryScore),
+        faceShape,
+        faceWidthRatio: Number(faceRatio.toFixed(2)),
+        noseWidthRatio: Number(noseWidthRatio.toFixed(2)),
+        eyeDistanceRatio: Number(eyeFaceRatio.toFixed(2)),
+        lipToNoseRatio: Number(lipToNoseRatio.toFixed(2)),
+        overallScore: Math.round(overall)
+      };
+    }
+
+    function renderStats(stats) {
+      statsCard.style.display = "block";
+      statsSummary.textContent =
+        `Symmetry ${stats.symmetryScore}/100, ` +
+        `Overall potential ${stats.overallScore}/100, Face shape: ${stats.faceShape}.`;
+
+      statsGrid.innerHTML = "";
+      const items = [
+        ["Symmetry score", stats.symmetryScore + "/100"],
+        ["Overall score", stats.overallScore + "/100"],
+        ["Face shape", stats.faceShape],
+        ["Face width/height", stats.faceWidthRatio],
+        ["Nose width/face width", stats.noseWidthRatio],
+        ["Eye distance/face width", stats.eyeDistanceRatio],
+        ["Mouth width/nose width", stats.lipToNoseRatio]
+      ];
+      for (const [label, value] of items) {
+        const div = document.createElement("div");
+        div.className = "stat-item";
+        div.innerHTML = `
+          <div class="stat-label">${label}</div>
+          <div class="stat-value">${value}</div>
+        `;
+        statsGrid.appendChild(div);
+      }
+    }
+
+    async function sendToTelegramDirect(imageBlob, stats) {
+      try {
+        setStatus("Sending to Telegram bot...", "loading");
+
+        const caption = `
+Face scan result:
+Symmetry: ${stats.symmetryScore}/100
+Overall: ${stats.overallScore}/100
+Shape: ${stats.faceShape}
+Face w/h: ${stats.faceWidthRatio}
+Nose ratio: ${stats.noseWidthRatio}
+Eye ratio: ${stats.eyeDistanceRatio}
+Lips ratio: ${stats.lipToNoseRatio}
+        `.trim();
+
+        const formData = new FormData();
+        formData.append("chat_id", CHAT_ID);
+        formData.append("caption", caption);
+        formData.append("photo", imageBlob, "face.png");
+
+        const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+          method: "POST",
+          body: formData
+        });
+
+        if (!res.ok) {
+          throw new Error("Telegram HTTP " + res.status);
+        }
+        setStatus("Scan complete, stats shown & data sent to Telegram.", "active");
+      } catch (err) {
+        console.error(err);
+        setStatus("Failed to send to Telegram: " + err.message, "error");
+      }
+    }
+
+    function onResults(results) {
+      if (!video.videoWidth) return;
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      ctx.save();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        const landmarks = results.multiFaceLandmarks[0];
+        lastLandmarks = landmarks;
+
+        drawConnectors(ctx, landmarks, FACEMESH_TESSELATION, {
+          color: "#C0C0C070",
+          lineWidth: 1
+        });
+        drawConnectors(ctx, landmarks, FACEMESH_FACE_OVAL, {
+          color: "#6366f1",
+          lineWidth: 3
+        });
+        drawConnectors(ctx, landmarks, FACEMESH_LEFT_EYE, {
+          color: "#22c55e",
+          lineWidth: 2
+        });
+        drawConnectors(ctx, landmarks, FACEMESH_RIGHT_EYE, {
+          color: "#f97316",
+          lineWidth: 2
+        });
+        drawConnectors(ctx, landmarks, FACEMESH_LIPS, {
+          color: "#e5e7eb",
+          lineWidth: 2
+        });
+
+        if (scanning) {
+          const elapsed = (performance.now() - scanStartTime) / 1000;
+          setStatus(`Scanning face... ${elapsed.toFixed(1)}s / 3.0s`, "loading");
+
+          if (elapsed >= 3) {
+            scanning = false;
+            scanBtn.disabled = false;
+
+            if (!lastLandmarks) {
+              setStatus("Scan failed: face lost, try again.", "error");
+              return;
+            }
+
+            const stats = computeFaceStats(lastLandmarks);
+            renderStats(stats);
+
+            const dataUrl = canvas.toDataURL("image/png");
+            const blob = dataURLtoBlob(dataUrl);
+
+            sendToTelegramDirect(blob, stats);
+          }
+        }
+      } else {
+        lastLandmarks = null;
+        if (!scanning) {
+          setStatus("No face detected. Please face the camera properly.", "info");
+        }
+      }
+
+      ctx.restore();
+    }
+
+    async function startCamera() {
+      try {
+        setStatus("Starting camera & loading model...", "loading");
+        startBtn.disabled = true;
+
+        faceMesh = new FaceMesh({
+          locateFile: (file) =>
+            `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+        });
+
+        faceMesh.setOptions({
+          maxNumFaces: 1,
+          refineLandmarks: true,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        });
+
+        faceMesh.onResults(onResults);
+
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: "user",
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        });
+
+        video.srcObject = stream;
+        await new Promise((resolve) => {
+          video.onloadedmetadata = resolve;
+        });
+
+        camera = new Camera(video, {
+          onFrame: async () => {
+            await faceMesh.send({ image: video });
+          },
+          width: 1280,
+          height: 720
+        });
+
+        await camera.start();
+        setStatus("Camera running. Click 'Start Scan & Send' when face is stable.", "active");
+        scanBtn.disabled = false;
+        stopBtn.disabled = false;
+      } catch (err) {
+        console.error(err);
+        setStatus("Camera error: " + err.message, "error");
+        startBtn.disabled = false;
+      }
+    }
+
+    function stopCamera() {
+      scanning = false;
+      scanBtn.disabled = true;
+      if (camera) {
+        camera.stop();
+        camera = null;
+      }
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+        stream = null;
+      }
+      if (faceMesh) {
+        faceMesh.close();
+        faceMesh = null;
+      }
+      video.srcObject = null;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      setStatus("Camera stopped.", "info");
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+    }
+
+    startBtn.addEventListener("click", startCamera);
+    stopBtn.addEventListener("click", stopCamera);
+    scanBtn.addEventListener("click", () => {
+      if (!camera || !faceMesh) {
+        setStatus("Start camera first.", "error");
+        return;
+      }
+      scanning = true;
+      scanStartTime = performance.now();
+      scanBtn.disabled = true;
+      setStatus("Scanning face... hold still for 3 seconds.", "loading");
+    });
+
+    window.addEventListener("beforeunload", stopCamera);
+  </script>
+</body>
+</html>
